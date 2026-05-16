@@ -73,8 +73,9 @@ fun DependencyHandler.addStarsectorCoreDependencies() {
     //Starsectors core jars live in different folders per OS, so look them up through the layout.
     val coreDir = starsectorLayout().gameWorkingDir
 
-    //Starsector
-    compileOnly(files(File(coreDir, "starfarer.api.jar")))
+    //Starsector. The API jar comes through the local Maven repo (see repositories block) so IntelliJ can attach its source.
+    //starfarer_obf is obfuscated with no source available, so it stays a plain file dependency.
+    compileOnly("com.fs.starfarer:starfarer-api:local")
     compileOnly(files(File(coreDir, "starfarer_obf.jar")))
 
     //Starsector dependencies
@@ -99,39 +100,7 @@ fun DependencyHandler.addStarsectorCoreDependencies() {
     compileOnly(files(File(coreDir, "xstream-1.4.10.jar")))
 }
 
-fun DependencyHandler.addModJars(jarNames: List<String>) {
-    if (jarNames.isEmpty()) return
 
-    val modsDir = file("$starsectorPath/mods/")
-    // Exclude this project's own folder. Otherwise, the configuration cache
-    // treats the mods own /jars/ directory listing as a config-time input, and
-    // every rebuild of the mod jar invalidates the cache.
-    val thisProjectFolder = projectDir.name
-    val modJarFiles = fileTree(modsDir) {
-        jarNames.forEach { include("*/jars/**/$it") }
-        exclude("$thisProjectFolder/**")
-    }
-
-    // Realize the file tree once to detect missing entries.
-    val foundNames = modJarFiles.files.map { it.name }.toSet()
-    jarNames.filterNot { it in foundNames }.forEach { missing ->
-        logger.error(
-            "Mod dependency '$missing' was not found in any mod's " +
-                "/jars folder under ${modsDir.absolutePath}. "
-        )
-    }
-
-    compileOnly(modJarFiles)
-}
-
-fun DependencyHandler.addCompileOnlyJar(path: String) {
-    val jarFile = file(path)
-    if (!jarFile.exists()) {
-        logger.error("Dependency '$path' was not found at ${jarFile.absolutePath}.")
-        return
-    }
-    compileOnly(files(jarFile))
-}
 
 plugins {
     // Apply the org.jetbrains.kotlin.jvm Plugin to add support for Kotlin.
@@ -144,6 +113,10 @@ plugins {
 repositories {
     // Use Maven Central for resolving dependencies.
     mavenCentral()
+
+    //Local Maven repo of staged Starsector API artifacts. The maven layout (vs flatDir) is what
+    //actually lets IntelliJ pick up the "-sources.jar" sibling for autocomplete and navigation.
+    maven { url = uri(stageStarsectorApi()) }
 }
 
 // Apply a specific Java toolchain to ease working on different environments.
@@ -174,6 +147,39 @@ tasks.jar {
     archiveFileName.set(jarName)
 }
 
+fun DependencyHandler.addModJars(jarNames: List<String>) {
+    if (jarNames.isEmpty()) return
+
+    val modsDir = file("$starsectorPath/mods/")
+    // Exclude this project's own folder. Otherwise, the configuration cache
+    // treats the mods own /jars/ directory listing as a config-time input, and
+    // every rebuild of the mod jar invalidates the cache.
+    val thisProjectFolder = projectDir.name
+    val modJarFiles = fileTree(modsDir) {
+        jarNames.forEach { include("*/jars/**/$it") }
+        exclude("$thisProjectFolder/**")
+    }
+
+    // Realize the file tree once to detect missing entries.
+    val foundNames = modJarFiles.files.map { it.name }.toSet()
+    jarNames.filterNot { it in foundNames }.forEach { missing ->
+        logger.error(
+            "Mod dependency '$missing' was not found in any mod's " +
+                    "/jars folder under ${modsDir.absolutePath}. "
+        )
+    }
+
+    compileOnly(modJarFiles)
+}
+
+fun DependencyHandler.addCompileOnlyJar(path: String) {
+    val jarFile = file(path)
+    if (!jarFile.exists()) {
+        logger.error("Dependency '$path' was not found at ${jarFile.absolutePath}.")
+        return
+    }
+    compileOnly(files(jarFile))
+}
 
 enum class StarsectorPlatform { WINDOWS, LINUX, MAC }
 
@@ -214,6 +220,47 @@ fun starsectorLayout(): StarsectorLayout = file(starsectorPath).let { root ->
             gameWorkingDir = File(root, "Contents/Resources/Java"),
         )
     }
+}
+
+//Stages the Starsector API as a local Maven repo under build/starsector-api/.
+//Using a maven layout (not flatDir) because IntelliJ only reliably attaches sources when the
+//artifact has a POM and follows the standard "<name>-<version>-sources.jar" classifier convention.
+//A jar IS a zip with optional manifest, so the source side is just a copy with the right filename.
+//If you ever hit a zip layout IntelliJ does not like, swap the copy for a real extract + repack.
+//Runs at configuration time so the files exist before Gradle resolves dependencies (including IDE sync).
+fun stageStarsectorApi(): File {
+    val repoDir = layout.buildDirectory.dir("starsector-api").get().asFile
+    val artifactDir = File(repoDir, "com/fs/starfarer/starfarer-api/local")
+    artifactDir.mkdirs()
+    val coreDir = starsectorLayout().gameWorkingDir
+
+    //Only copy if the source is newer than the staged file, so repeat syncs are cheap.
+    fun stageIfStale(src: File, dst: File) {
+        if (!src.exists()) return
+        if (!dst.exists() || dst.lastModified() < src.lastModified()) {
+            src.copyTo(dst, overwrite = true)
+        }
+    }
+
+    stageIfStale(File(coreDir, "starfarer.api.jar"), File(artifactDir, "starfarer-api-local.jar"))
+    stageIfStale(File(coreDir, "starfarer.api.zip"), File(artifactDir, "starfarer-api-local-sources.jar"))
+
+    //Minimal POM. Gradle's maven resolver needs one to recognise the artifact and to look up the -sources classifier.
+    val pomFile = File(artifactDir, "starfarer-api-local.pom")
+    if (!pomFile.exists()) {
+        pomFile.writeText(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.fs.starfarer</groupId>
+                <artifactId>starfarer-api</artifactId>
+                <version>local</version>
+            </project>
+            """.trimIndent()
+        )
+    }
+    return repoDir
 }
 
 data class StarsectorLaunchSpec(
