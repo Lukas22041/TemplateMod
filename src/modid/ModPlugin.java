@@ -1,7 +1,6 @@
-package author.modname;
+package modid;
 
 import com.fs.starfarer.api.BaseModPlugin;
-import com.fs.starfarer.api.Global;
 
 public class ModPlugin extends BaseModPlugin {
 
