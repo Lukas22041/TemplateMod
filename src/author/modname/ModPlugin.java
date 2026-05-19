@@ -9,7 +9,9 @@ public class ModPlugin extends BaseModPlugin {
     * It is most useful for loading data that only really needs to be setup once. */
     @Override
     public void onApplicationLoad() throws Exception {
-
+        throw new RuntimeException("Template mod loaded!" +
+                "\nThis crash is used to test if your mod setup works correctly (it does)." +
+                "\nFix it by removing the \"RuntimeException\" lines in your mod plugin.");
     }
 
     /*This method is run in two cases:

@@ -6,10 +6,28 @@ val starsectorPath= "../../";
 //The name of the file that the code is compiled to. This will automatically place in to the /jars folder.
 val jarName = "TemplateMod.jar"
 
-//Name for the Zip that is created after each build.
+//Name for the Zip that is created when you run package_mod.bat.
 //This zip includes the data, graphics, jars, sounds and src folder.
 //It also includes the mod_info.json and .version files at the root folder.
 val zipName = "TemplateMod.zip"
+
+//Other mods to load as compile-time dependencies. Adding them will provide auto-complete for their functions.
+//Each entry is the jar name. The build searches every mod /jars/ folder for a matching file ("LazyLib.jar" -> "Starsector/mods/LazyLib/jars/LazyLib.jar")
+//Mods added this way still need to be added to mod_info.json if they are always required (hard-dependency).
+val modDependencies = listOf(
+    "LazyLib.jar", //LazyLib
+    "MagicLib.jar", //MagicLib
+    "MagicLib-Kotlin.jar",
+    "Graphics.jar", //GraphicsLib
+    "LunaLib.jar", //LunaLib
+
+    //"ExerelinCore.jar", //Nexerelin
+)
+
+
+
+
+
 
 //Files and folders (relative to the project root) included in the packaged zip.
 //Directories keep their structure in the zip; files are placed at the zip root.
@@ -28,20 +46,17 @@ val packageIncludeExtensions = listOf(
     "version",
 )
 
-//Other mods to load as compile-time dependencies. Adding them will provide auto-complete for their functions.
-//Each entry is the jar name. The build searches every mod /jars/ folder for a matching file ("LazyLib.jar" -> "Starsector/mods/LazyLib/jars/LazyLib.jar")
-//Mods added this way still need to be added to mod_info.json if they are always required (hard-dependency).
-val modDependencies = listOf(
-    "LazyLib.jar",
-    "MagicLib.jar",
-	"LunaLib.jar",
-)
-
 //Additional jars to include, like libraries you ship with your mod.
 //Paths are relative to this projects root directory.
 val otherDependencies = listOf<String>(
     // "jars/dependency.jar",
 )
+
+//Folder (relative to this project root) that is also searched for modDependencies and otherDependencies.
+//Drop jars here when you don't have the source mod installed under /mods/, or want to pin a specific version.
+//For modDependencies, files are matched by filename (recursively).
+//For otherDependencies, the entry's path is also tried relative to this folder.
+val libsFolder = "libs"
 
 //Java version to use. Should be 17, as it is what starsector itself uses.
 val javaVersion = 17
@@ -160,25 +175,47 @@ fun DependencyHandler.addModJars(jarNames: List<String>) {
         exclude("$thisProjectFolder/**")
     }
 
+    // Also look inside the local libs folder, if present. Matched by filename, recursively.
+    val libsDir = file(libsFolder)
+    val libsJarFiles = if (libsDir.exists()) {
+        fileTree(libsDir) {
+            jarNames.forEach { include("**/$it") }
+        }
+    } else {
+        files()
+    }
+
+    val allJarFiles = modJarFiles + libsJarFiles
+
     // Realize the file tree once to detect missing entries.
-    val foundNames = modJarFiles.files.map { it.name }.toSet()
+    val foundNames = allJarFiles.files.map { it.name }.toSet()
     jarNames.filterNot { it in foundNames }.forEach { missing ->
         logger.error(
             "Mod dependency '$missing' was not found in any mod's " +
-                    "/jars folder under ${modsDir.absolutePath}. "
+                    "/jars folder under ${modsDir.absolutePath} " +
+                    "or in ${libsDir.absolutePath}."
         )
     }
 
-    compileOnly(modJarFiles)
+    compileOnly(allJarFiles)
 }
 
 fun DependencyHandler.addCompileOnlyJar(path: String) {
     val jarFile = file(path)
-    if (!jarFile.exists()) {
-        logger.error("Dependency '$path' was not found at ${jarFile.absolutePath}.")
+    if (jarFile.exists()) {
+        compileOnly(files(jarFile))
         return
     }
-    compileOnly(files(jarFile))
+    // Fallback: try resolving the same path relative to the libs folder.
+    val libsFile = file("$libsFolder/$path")
+    if (libsFile.exists()) {
+        compileOnly(files(libsFile))
+        return
+    }
+    logger.error(
+        "Dependency '$path' was not found at ${jarFile.absolutePath} " +
+                "or at ${libsFile.absolutePath}."
+    )
 }
 
 enum class StarsectorPlatform { WINDOWS, LINUX, MAC }
