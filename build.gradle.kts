@@ -445,13 +445,18 @@ tasks.register<Zip>("packageMod") {
     // Where to put the zip
     destinationDirectory.set(layout.projectDirectory)
 
+    // Wrap everything inside a top-level folder named after this project's root directory,
+    // so the zip extracts to a single "<ProjectName>/" folder ready to drop into /mods/.
+    // Every from() below inherits this prefix.
+    into(projectDir.name)
+
     // 1. Include the compiled jar from the build task
     from(tasks.jar) {
         into("jars") // Optional: place inside a jar folder in the zip
     }
 
     // 2. Include the files and folders listed in packageIncludes.
-    // Directories are placed into a same-named folder in the zip; files go at the root.
+    // Directories are placed into a same-named folder; files go at the folder root.
     packageIncludes.forEach { name ->
         val source = file(name)
         if (source.isDirectory) {
