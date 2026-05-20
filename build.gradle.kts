@@ -4,6 +4,7 @@
 val starsectorPath= "../../";
 
 //The name of the file that the code is compiled to. This will automatically place in to the /jars folder.
+//Make sure that the "jars" entry in your mod_info.json matches this.
 val jarName = "TemplateMod.jar"
 
 //Name for the Zip that is created when you run package_mod.bat.
@@ -91,28 +92,28 @@ fun DependencyHandler.addStarsectorCoreDependencies() {
     //Starsector. The API jar comes through the local Maven repo (see repositories block) so IntelliJ can attach its source.
     //starfarer_obf is obfuscated with no source available, so it stays a plain file dependency.
     compileOnly("com.fs.starfarer:starfarer-api:local")
-    compileOnly(files(File(coreDir, "starfarer_obf.jar")))
 
-    //Starsector dependencies
-    compileOnly(files(File(coreDir, "commons-compiler.jar")))
-    compileOnly(files(File(coreDir, "commons-compiler-jdk.jar")))
-    compileOnly(files(File(coreDir, "fs.common_obf.jar")))
-    compileOnly(files(File(coreDir, "fs.sound_obf.jar")))
-    compileOnly(files(File(coreDir, "janino.jar")))
-    compileOnly(files(File(coreDir, "jaxb-api-2.4.0-b180830.0359.jar")))
-    compileOnly(files(File(coreDir, "jaxb-api-2.4.0-b180830.0359-sources.jar")))
-    compileOnly(files(File(coreDir, "jinput.jar")))
-    compileOnly(files(File(coreDir, "jogg-0.0.7.jar")))
-    compileOnly(files(File(coreDir, "jorbis-0.0.15.jar")))
-    compileOnly(files(File(coreDir, "json.jar")))
-
-    compileOnly(files(File(coreDir, "log4j-1.2.9.jar")))
-    compileOnly(files(File(coreDir, "lwjgl.jar")))
-    compileOnly(files(File(coreDir, "lwjgl_util.jar")))
-
-    compileOnly(files(File(coreDir, "txw2-3.0.2.jar")))
-    compileOnly(files(File(coreDir, "webp-imageio-0.1.6.jar")))
-    compileOnly(files(File(coreDir, "xstream-1.4.10.jar")))
+    //All other core jars in one files(...) call.
+    compileOnly(files(
+        File(coreDir, "starfarer_obf.jar"),
+        File(coreDir, "commons-compiler.jar"),
+        File(coreDir, "commons-compiler-jdk.jar"),
+        File(coreDir, "fs.common_obf.jar"),
+        File(coreDir, "fs.sound_obf.jar"),
+        File(coreDir, "janino.jar"),
+        File(coreDir, "jaxb-api-2.4.0-b180830.0359.jar"),
+        File(coreDir, "jaxb-api-2.4.0-b180830.0359-sources.jar"),
+        File(coreDir, "jinput.jar"),
+        File(coreDir, "jogg-0.0.7.jar"),
+        File(coreDir, "jorbis-0.0.15.jar"),
+        File(coreDir, "json.jar"),
+        File(coreDir, "log4j-1.2.9.jar"),
+        File(coreDir, "lwjgl.jar"),
+        File(coreDir, "lwjgl_util.jar"),
+        File(coreDir, "txw2-3.0.2.jar"),
+        File(coreDir, "webp-imageio-0.1.6.jar"),
+        File(coreDir, "xstream-1.4.10.jar"),
+    ))
 }
 
 
@@ -268,8 +269,22 @@ fun starsectorLayout(): StarsectorLayout = file(starsectorPath).let { root ->
 fun stageStarsectorApi(): File {
     val repoDir = layout.buildDirectory.dir("starsector-api").get().asFile
     val artifactDir = File(repoDir, "com/fs/starfarer/starfarer-api/local")
-    artifactDir.mkdirs()
     val coreDir = starsectorLayout().gameWorkingDir
+
+    val srcJar = File(coreDir, "starfarer.api.jar")
+    val srcZip = File(coreDir, "starfarer.api.zip")
+    val dstJar = File(artifactDir, "starfarer-api-local.jar")
+    val dstSources = File(artifactDir, "starfarer-api-local-sources.jar")
+    val pomFile = File(artifactDir, "starfarer-api-local.pom")
+
+    //Fast path: if everything is already staged and at least as new as its source, return immediately
+    //without touching the filesystem further. Hit on every config-cache miss where Starsector hasn't
+    //been updated since last build (i.e. almost always).
+    val jarFresh = dstJar.exists() && (!srcJar.exists() || dstJar.lastModified() >= srcJar.lastModified())
+    val sourcesFresh = !srcZip.exists() || (dstSources.exists() && dstSources.lastModified() >= srcZip.lastModified())
+    if (jarFresh && sourcesFresh && pomFile.exists()) return repoDir
+
+    artifactDir.mkdirs()
 
     //Only copy if the source is newer than the staged file, so repeat syncs are cheap.
     fun stageIfStale(src: File, dst: File) {
@@ -279,11 +294,10 @@ fun stageStarsectorApi(): File {
         }
     }
 
-    stageIfStale(File(coreDir, "starfarer.api.jar"), File(artifactDir, "starfarer-api-local.jar"))
-    stageIfStale(File(coreDir, "starfarer.api.zip"), File(artifactDir, "starfarer-api-local-sources.jar"))
+    stageIfStale(srcJar, dstJar)
+    stageIfStale(srcZip, dstSources)
 
     //Minimal POM. Gradle's maven resolver needs one to recognise the artifact and to look up the -sources classifier.
-    val pomFile = File(artifactDir, "starfarer-api-local.pom")
     if (!pomFile.exists()) {
         pomFile.writeText(
             """
@@ -400,14 +414,15 @@ fun parseLauncher(): StarsectorLaunchSpec {
     return StarsectorLaunchSpec(raw.jvmArgs, classpath, raw.mainClass)
 }
 
+val launcherInfo by lazy { starsectorLayout() to parseLauncher() }
+
 //Builds the mod jar, then runs Starsector using the same java/classpath/jvmArgs the launcher would use.
 tasks.register<JavaExec>("runStarsector") {
     group = "starsector"
     description = "Build the mod and launch Starsector (with launcher)."
     dependsOn(tasks.jar)
 
-    val layout = starsectorLayout()
-    val parsed = parseLauncher()
+    val (layout, parsed) = launcherInfo
     setExecutable(layout.javaExecutable.absolutePath)
     workingDir = layout.gameWorkingDir
     mainClass.set(parsed.mainClass)
@@ -422,8 +437,7 @@ tasks.register<JavaExec>("runStarsectorNoLauncher") {
     description = "Build the mod and launch Starsector, skipping the launcher."
     dependsOn(tasks.jar)
 
-    val layout = starsectorLayout()
-    val parsed = parseLauncher()
+    val (layout, parsed) = launcherInfo
     setExecutable(layout.javaExecutable.absolutePath)
     workingDir = layout.gameWorkingDir
     mainClass.set(parsed.mainClass)
