@@ -17,8 +17,11 @@ val zipName = "TemplateMod.zip"
 //Mods added this way still need to be added to mod_info.json if they are always required (hard-dependency).
 val modDependencies = listOf(
     "LazyLib.jar", //LazyLib
+    "LazyLib-Kotlin.jar",
+
     "MagicLib.jar", //MagicLib
     "MagicLib-Kotlin.jar",
+
     "Graphics.jar", //GraphicsLib
     "LunaLib.jar", //LunaLib
 
@@ -260,6 +263,20 @@ fun starsectorLayout(): StarsectorLayout = file(starsectorPath).let { root ->
     }
 }
 
+//Reads a file's modification time in a way the configuration cache will track as an input.
+//Plain File.lastModified() calls at config time are NOT tracked by Gradle, so without this
+//a Starsector update would not invalidate the cache and we'd keep serving the old staged
+//API jar. Routing through a ValueSource is the documented escape hatch for "track external
+//file state at configuration time".
+abstract class FileMtimeSource : ValueSource<Long, FileMtimeSource.Parameters> {
+    interface Parameters : ValueSourceParameters {
+        val path: Property<String>
+    }
+    override fun obtain(): Long = File(parameters.path.get()).let {
+        if (it.exists()) it.lastModified() else -1L
+    }
+}
+
 //Stages the Starsector API as a local Maven repo under build/starsector-api/.
 //Using a maven layout (not flatDir) because IntelliJ only reliably attaches sources when the
 //artifact has a POM and follows the standard "<name>-<version>-sources.jar" classifier convention.
@@ -277,10 +294,19 @@ fun stageStarsectorApi(): File {
     val dstSources = File(artifactDir, "starfarer-api-local-sources.jar")
     val pomFile = File(artifactDir, "starfarer-api-local.pom")
 
-    //Fast path: if everything is already staged and at least as new as its source, return immediately
-    //without touching the filesystem further. Hit on every config-cache miss where Starsector hasn't
-    //been updated since last build (i.e. almost always).
-    val jarFresh = dstJar.exists() && (!srcJar.exists() || dstJar.lastModified() >= srcJar.lastModified())
+    //Force the configuration cache to depend on the source file mtimes. The `.get()` calls
+    //pull the values, which makes them part of the cache fingerprint. When Starsector is
+    //updated and these mtimes change, the cache invalidates and the staging logic re-runs.
+    providers.of(FileMtimeSource::class.java) { parameters.path.set(srcJar.absolutePath) }.get()
+    providers.of(FileMtimeSource::class.java) { parameters.path.set(srcZip.absolutePath) }.get()
+
+    require(srcJar.exists()) {
+        "Starsector API jar not found at ${srcJar.absolutePath}. " +
+                "Check starsectorPath at the top of this build script."
+    }
+
+    //Fast path: staged files match (or post-date) their sources, so we can return without doing anything.
+    val jarFresh = dstJar.exists() && dstJar.lastModified() >= srcJar.lastModified()
     val sourcesFresh = !srcZip.exists() || (dstSources.exists() && dstSources.lastModified() >= srcZip.lastModified())
     if (jarFresh && sourcesFresh && pomFile.exists()) return repoDir
 
@@ -328,53 +354,70 @@ data class RawLaunchSpec(
     val mainClass: String,
 )
 
-//vmparams is a single line file. Just split on whitespace.
+//Whitespace-aware tokenizer that keeps quoted content as a single token. Single or double
+//quotes group their content; the quote chars themselves are consumed. Needed so launcher
+//flags like -Dfoo="bar baz" survive instead of becoming two tokens.
+fun shellTokenize(s: String): List<String> {
+    val out = mutableListOf<String>()
+    val cur = StringBuilder()
+    var quote: Char? = null
+    for (c in s) when {
+        quote != null -> if (c == quote) quote = null else cur.append(c)
+        c == '"' || c == '\'' -> quote = c
+        c.isWhitespace() -> if (cur.isNotEmpty()) { out += cur.toString(); cur.clear() }
+        else -> cur.append(c)
+    }
+    if (cur.isNotEmpty()) out += cur.toString()
+    return out
+}
+
+//vmparams is a single line listing every flag, separated by whitespace.
 fun parseWindowsLauncher(file: File): RawLaunchSpec {
-    val tokens = file.readText().trim().split(Regex("\\s+"))
+    val tokens = shellTokenize(file.readText().trim())
     return sliceJavaCommand(tokens, classpathSeparator = ';', sourceForError = file)
 }
 
-//starsector.sh is a shell script. Drop comment lines, join `\`-continuations, then tokenize.
+//starsector.sh is a multi-line shell script with one flag per line, joined by `\`-continuations.
+//Drop comment lines, then collapse each `\<newline>` into a space so the whole java invocation
+//lands on one logical line before tokenizing.
 fun parseLinuxLauncher(file: File): RawLaunchSpec {
-    val tokens = file.readLines()
+    val joined = file.readLines()
         .filterNot { it.trim().startsWith("#") }
         .joinToString("\n")
         .replace(Regex("""\\\r?\n"""), " ")
-        .split(Regex("\\s+"))
-        .filter { it.isNotEmpty() }
+    val tokens = shellTokenize(joined)
     return sliceJavaCommand(tokens, classpathSeparator = ':', sourceForError = file)
 }
 
-
-//Same as Linux, but the mac script also wraps args in quotes and uses shell vars like ${EXTRAARGS}.
-//Strip the quotes and drop unexpanded shell vars before tokenizing.
+//Same as Linux but additionally drops `${VAR}` placeholders. The mac script has `${EXTRAARGS}`
+//as an injection point that would normally be expanded by the shell; we have nothing to expand
+//it to, so we skip the token.
 fun parseMacLauncher(file: File): RawLaunchSpec {
-    val tokens = file.readLines()
+    val joined = file.readLines()
         .filterNot { it.trim().startsWith("#") }
         .joinToString("\n")
         .replace(Regex("""\\\r?\n"""), " ")
-        .split(Regex("\\s+"))
-        .filter { it.isNotEmpty() }
-        .map { it.replace("\"", "") }           // strip shell quotes
-        .filterNot { it.startsWith("\${") }      // drop unexpanded shell vars (e.g. ${EXTRAARGS})
+    val tokens = shellTokenize(joined).filterNot { it.startsWith("\${") }
     return sliceJavaCommand(tokens, classpathSeparator = ':', sourceForError = file)
 }
 
-//Given the tokens from a launcher file, finds the `java` invocation and pulls out the parts
-//we need: jvmArgs (everything between `java` and `-classpath`), the classpath entries, and the main class.
+//Pulls jvmArgs, classpath entries, and main class out of the tokenized java invocation.
+//Expected layout: [java] [jvmArgs...] [-classpath|-cp] [cp string] [mainClass] [args...]
 fun sliceJavaCommand(
     tokens: List<String>,
     classpathSeparator: Char,
     sourceForError: File,
 ): RawLaunchSpec {
-    // Case-sensitive: `../Resources/Java` (capital J) must NOT match the Mac
-    // script's `cd` target.
+    //Match the executable by basename. Case-sensitive on purpose: the Mac script does
+    //`cd ../Resources/Java`, and lowercase `java` must not match the uppercase `Java` dir.
     val javaIdx = tokens.indexOfFirst { token ->
         val basename = token.substringAfterLast('/').substringAfterLast('\\')
         basename == "java" || basename == "java.exe"
     }
     require(javaIdx >= 0) { "Could not locate the java invocation in $sourceForError" }
 
+    //First -classpath/-cp after the java token. If Starsector ever switches to --module-path,
+    //this is where it would break; extend the parser then.
     val cpIdx = (javaIdx + 1 until tokens.size).firstOrNull { i ->
         tokens[i] == "-classpath" || tokens[i] == "-cp"
     } ?: error("Could not locate -classpath/-cp in $sourceForError")
@@ -387,6 +430,7 @@ fun sliceJavaCommand(
         .filter { it.isNotEmpty() }
 
     return RawLaunchSpec(
+        //Everything between `java` and `-classpath` is treated as a jvm arg.
         jvmArgs = tokens.subList(javaIdx + 1, cpIdx),
         classpath = classpath,
         mainClass = tokens[cpIdx + 2],
@@ -416,18 +460,40 @@ fun parseLauncher(): StarsectorLaunchSpec {
 
 val launcherInfo by lazy { starsectorLayout() to parseLauncher() }
 
-//Builds the mod jar, then runs Starsector using the same java/classpath/jvmArgs the launcher would use.
+//JetBrains Runtime, downloaded on demand via the foojay resolver (see settings.gradle.kts).
+//Used in place of the bundled Starsector JRE for these tasks so an attached debugger can
+//redefine classes with structural changes (added/removed methods, including lambdas).
+//Requires the -XX:+AllowEnhancedClassRedefinition vmparams flag to be set.
+val jbrLauncher = javaToolchains.launcherFor {
+    languageVersion = JavaLanguageVersion.of(javaVersion)
+    vendor = JvmVendorSpec.JETBRAINS
+}
+
+//AllowEnhancedClassRedefinition requires Serial or G1 GC, but Starsector's vmparams
+//configures Shenandoah. Drop the Shenandoah-specific flags so JBR falls back to its
+//default (G1). Only affects these gradle tasks; the in-game launcher (vmparams) is
+//untouched, so normal runs still use Shenandoah.
+fun List<String>.forJbr(): List<String> = filterNot { it.contains("Shenandoah") }
+
+//Builds the mod jar, then runs Starsector using the same classpath/jvmArgs the launcher would use.
 tasks.register<JavaExec>("runStarsector") {
     group = "starsector"
     description = "Build the mod and launch Starsector (with launcher)."
     dependsOn(tasks.jar)
 
     val (layout, parsed) = launcherInfo
-    setExecutable(layout.javaExecutable.absolutePath)
+    javaLauncher.set(jbrLauncher)
     workingDir = layout.gameWorkingDir
     mainClass.set(parsed.mainClass)
     classpath = files(parsed.classpath)
-    jvmArgs = parsed.jvmArgs
+    jvmArgs = listOf(
+        "-XX:+AllowEnhancedClassRedefinition",
+        //IntelliJ's HotSwap UI silently no-ops some reloads under Gradle build delegation
+        //(YouTrack IDEA-286486). This routes every JVMTI redefineClasses attempt to stderr,
+        //so the game's console shows what was reloaded and why a reload was rejected when
+        //the IDE balloon doesn't appear.
+        "-Xlog:redefine+class+load=info:stderr:tags",
+    ) + parsed.jvmArgs.forJbr()
 }
 
 //Same as above, but skips the launcher window and jumps straight in to the game.
@@ -438,16 +504,18 @@ tasks.register<JavaExec>("runStarsectorNoLauncher") {
     dependsOn(tasks.jar)
 
     val (layout, parsed) = launcherInfo
-    setExecutable(layout.javaExecutable.absolutePath)
+    javaLauncher.set(jbrLauncher)
     workingDir = layout.gameWorkingDir
     mainClass.set(parsed.mainClass)
     classpath = files(parsed.classpath)
     jvmArgs = listOf(
+        "-XX:+AllowEnhancedClassRedefinition",
+        "-Xlog:redefine+class+load=info:stderr:tags",
         "-DstartRes=1920x1080",
         "-DlaunchDirect=true",
         "-DstartFS=false",
         "-DstartSound=true",
-    ) + parsed.jvmArgs
+    ) + parsed.jvmArgs.forJbr()
 }
 
 tasks.register<Zip>("packageMod") {
