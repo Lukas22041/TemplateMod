@@ -69,8 +69,12 @@ val otherDependencies = listOf<String>(
 //For otherDependencies, the entry's path is also tried relative to this folder.
 val libsFolder = "libs"
 
+//Resolution used when launching via "runStarsectorNoLauncher" (the run configuration that skips the launcher window).
+val devResolution = "1920x1080"
+
 //Java version to use. Should be 17, as it is what starsector itself uses.
 val javaVersion = 17
+
 
 
 
@@ -141,9 +145,7 @@ plugins {
 }
 
 // Move IntelliJ's compiled output from out/ to build/idea-out/ so we only have one top-level
-// build folder. Different subdirs from Gradle's build/classes/ on purpose: sharing the same
-// dir would have IntelliJ's incremental compiler and Gradle's incremental compiler both
-// writing class files and confusing each other's up-to-date checks.
+// build folder.
 idea {
     module {
         outputDir = file("build/idea-out/main")
@@ -530,7 +532,7 @@ tasks.register<JavaExec>("runStarsectorNoLauncher") {
     isIgnoreExitValue = true
     jvmArgs = listOf(
         "-XX:+AllowEnhancedClassRedefinition",
-        "-DstartRes=1920x1080",
+        "-DstartRes=$devResolution",
         "-DlaunchDirect=true",
         "-DstartFS=false",
         "-DstartSound=true",
