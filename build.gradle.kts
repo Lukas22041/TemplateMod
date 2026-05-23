@@ -494,12 +494,11 @@ tasks.register<JavaExec>("runStarsector") {
     workingDir = layout.gameWorkingDir
     mainClass.set(parsed.mainClass)
     classpath = files(parsed.classpath)
+    //Stops treating game-crashes as build errors
+    isIgnoreExitValue = true
     jvmArgs = listOf(
         "-XX:+AllowEnhancedClassRedefinition",
-        //IntelliJ's HotSwap UI silently no-ops some reloads under Gradle build delegation
-        //(YouTrack IDEA-286486). This routes every JVMTI redefineClasses attempt to stderr,
-        //so the game's console shows what was reloaded and why a reload was rejected when
-        //the IDE balloon doesn't appear.
+        //Provides better hotswap error/notifactions in the console output
         "-Xlog:redefine+class+load=info:stderr:tags",
     ) + parsed.jvmArgs.forJbr()
 }
@@ -516,6 +515,7 @@ tasks.register<JavaExec>("runStarsectorNoLauncher") {
     workingDir = layout.gameWorkingDir
     mainClass.set(parsed.mainClass)
     classpath = files(parsed.classpath)
+    isIgnoreExitValue = true
     jvmArgs = listOf(
         "-XX:+AllowEnhancedClassRedefinition",
         "-Xlog:redefine+class+load=info:stderr:tags",
