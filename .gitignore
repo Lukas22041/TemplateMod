@@ -5,4 +5,7 @@
 /jars/
 /build/
 
+/out/
+*.iml
+
 *.zip

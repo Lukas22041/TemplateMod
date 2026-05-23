@@ -22,10 +22,15 @@ val modDependencies = listOf(
     "MagicLib.jar", //MagicLib
     "MagicLib-Kotlin.jar",
 
-    "Graphics.jar", //GraphicsLib
     "LunaLib.jar", //LunaLib
 
+    //Some other common dependencies, uncomment them if you need them.
+    //Make sure to note them in mod_info.json as well.
+
+    //"Graphics.jar", //GraphicsLib
     //"ExerelinCore.jar", //Nexerelin
+    //"lw_Console.jar", //Console Commands
+
 )
 
 
@@ -42,12 +47,15 @@ val packageIncludes = listOf(
     "graphics",
     "sounds",
     "src",
+    "LICENSE"
 )
 
 //File extensions to include from the project root in the packaged zip.
 //Each entry is matched as "*.<ext>" against files directly in the project root.
 val packageIncludeExtensions = listOf(
     "version",
+    "md",
+    "txt"
 )
 
 //Additional jars to include, like libraries you ship with your mod.
