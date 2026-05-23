@@ -1,4 +1,3 @@
-
 //Automatically points to the starsector folder if the mod is placed in to the "mods" folder.
 //If you do not place the project in to your mods folder, replace this with the path to Starsectors root folder.
 val starsectorPath= "../../";
@@ -135,6 +134,21 @@ plugins {
 
     // Apply the java-library plugin for API and implementation separation.
     `java-library`
+
+    // The built-in `idea` plugin lets us steer IntelliJ's module config from this script,
+    // namely the compile-output dirs (see the `idea { ... }` block below).
+    idea
+}
+
+// Move IntelliJ's compiled output from out/ to build/idea-out/ so we only have one top-level
+// build folder. Different subdirs from Gradle's build/classes/ on purpose: sharing the same
+// dir would have IntelliJ's incremental compiler and Gradle's incremental compiler both
+// writing class files and confusing each other's up-to-date checks.
+idea {
+    module {
+        outputDir = file("build/idea-out/main")
+        testOutputDir = file("build/idea-out/test")
+    }
 }
 
 repositories {
@@ -498,8 +512,6 @@ tasks.register<JavaExec>("runStarsector") {
     isIgnoreExitValue = true
     jvmArgs = listOf(
         "-XX:+AllowEnhancedClassRedefinition",
-        //Provides better hotswap error/notifactions in the console output
-        "-Xlog:redefine+class+load=info:stderr:tags",
     ) + parsed.jvmArgs.forJbr()
 }
 
@@ -518,13 +530,39 @@ tasks.register<JavaExec>("runStarsectorNoLauncher") {
     isIgnoreExitValue = true
     jvmArgs = listOf(
         "-XX:+AllowEnhancedClassRedefinition",
-        "-Xlog:redefine+class+load=info:stderr:tags",
         "-DstartRes=1920x1080",
         "-DlaunchDirect=true",
         "-DstartFS=false",
         "-DstartSound=true",
     ) + parsed.jvmArgs.forJbr()
 }
+
+//Ensure IntelliJ's "Build and run using" stays on IDEA (not Gradle) so HotSwap can recompile
+//changed classes in milliseconds via IntelliJ's incremental compiler instead of shelling out to
+//Gradle on every reload. The .idea/ folder is gitignored (IDE config is user-specific), so we
+//re-apply this on every Gradle sync. Never creates gradle.xml: if it's missing, IntelliJ is in
+//the middle of a first-time import and writing the file ourselves can break its sync detection.
+//Wrapped in runCatching: any failure here is non-fatal, sothe build/sync continues.
+runCatching {
+    val gradleXml = file(".idea/gradle.xml")
+    if (gradleXml.exists()) {
+        val text = gradleXml.readText()
+        val canonical = """<option name="delegatedBuild" value="false" />"""
+        val existingLine = Regex("""<option name="delegatedBuild" value="(?:true|false)"\s*/>""")
+        val updated = if (existingLine.containsMatchIn(text)) {
+            text.replace(existingLine, canonical)
+        } else {
+            //Insert as first child of the GradleProjectSettings block if present.
+            Regex("""<GradleProjectSettings[^>]*>""").find(text)?.let { match ->
+                text.replaceRange(match.range.last + 1, match.range.last + 1, "\n        $canonical")
+            } ?: text
+        }
+        if (updated != text) gradleXml.writeText(updated)
+    }
+}.onFailure { e ->
+    logger.warn("Could not enforce delegatedBuild=false in .idea/gradle.xml (non-fatal): ${e.message}")
+}
+
 
 tasks.register<Zip>("packageMod") {
     group = "distribution"
