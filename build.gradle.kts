@@ -100,7 +100,9 @@ val isLibrary = false
 
 
 
-
+// Workaround for a Gradle issue: the Kotlin compiler can try to write its session-alive flag file before build/.kotlin/sessions/ exists.
+// This creates the folder preemptively before compilation to avoid that issue.
+layout.buildDirectory.dir(".kotlin/sessions").get().asFile.mkdirs()
 
 //Local Maven repo where mod-dependency jars get staged, along with a matching "-sources.jar"
 //(see stageModDependency / addModJars below). Declared up here (rather than next to docsRepoDir)
