@@ -1,4 +1,5 @@
 import java.util.zip.ZipFile
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 
 
@@ -211,11 +212,20 @@ tasks.withType<JavaCompile>().configureEach {
 kotlin {
     compilerOptions {
         javaParameters = true
+        //Pin the kotlin version to the kotlin runtime that is shipped with LazyLib
+        apiVersion = KotlinVersion.KOTLIN_2_1
+        languageVersion = KotlinVersion.KOTLIN_2_1
     }
 }
 
 tasks.test {
     enabled = false
+}
+
+//Gradle 9 defaults archives to reproducible mode, which stamps every entry with 1980-02-01.
+//Keep the real file modification dates in the jar and the release zip instead.
+tasks.withType<AbstractArchiveTask>().configureEach {
+    isPreserveFileTimestamps = true
 }
 
 tasks.jar {
