@@ -5,7 +5,7 @@
   "utility": false,
   "version": "1.0.0",
   "description": "Template.",
-  "gameVersion": "0.98a-RC8",
+  "gameVersion": "0.98.5a-RC5",
   "jars": [ "jars/TemplateMod.jar" ],
   "modPlugin": "modid.ModPlugin",
   "dependencies": [
