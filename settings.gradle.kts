@@ -41,7 +41,6 @@ val modDependencies = listOf(
 //Directories keep their structure in the zip; files are placed at the zip root.
 //Missing entries are silently skipped by Gradle.
 val packageIncludes = listOf(
-    "mod_info.json",
     "data",
     "graphics",
     "sounds",
@@ -54,7 +53,8 @@ val packageIncludes = listOf(
 val packageIncludeExtensions = listOf(
     "version",
     "md",
-    "txt"
+    "txt",
+    "json"
 )
 
 //Additional jars to include, like libraries you ship with your mod.
