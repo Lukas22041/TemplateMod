@@ -19,7 +19,6 @@ val modDependencies = listOf(
     "LazyLib-Kotlin.jar",
 
     "MagicLib.jar", //MagicLib
-    "MagicLib-Kotlin.jar",
 
     "LunaLib.jar", //LunaLib
 
@@ -29,7 +28,7 @@ val modDependencies = listOf(
     //"Graphics.jar", //GraphicsLib
     //"ExerelinCore.jar", //Nexerelin
     //"lw_Console.jar", //Console Commands
-
+    //"PatchLibAPI.jar", // PatchLib
 )
 
 
