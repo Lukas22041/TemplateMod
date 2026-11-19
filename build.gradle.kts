@@ -252,12 +252,34 @@ fun jarDeclaresAnnotationProcessor(jarFile: File): Boolean {
     }.getOrDefault(false)
 }
 
+//True if the jar bundles at least one .java/.kt source file (not just .class files).
+fun jarHasSourceEntries(jarFile: File): Boolean = runCatching {
+    ZipFile(jarFile).use { zip ->
+        zip.entries().asSequence().any { !it.isDirectory && (it.name.endsWith(".java") || it.name.endsWith(".kt")) }
+    }
+}.getOrDefault(false)
+
+//For a jar at <mod>/jars/.../x.jar, returns <mod>/src if it exists and contains java/kt files.
+//Returns null for jars that don't live under a "jars" folder (e.g. the local libs folder).
+fun findModSrcDir(jarFile: File): File? {
+    var dir: File? = jarFile.parentFile
+    while (dir != null) {
+        if (dir.name == "jars") {
+            return File(dir.parentFile, "src").takeIf { src ->
+                src.isDirectory && src.walkTopDown().any { it.isFile && (it.extension == "java" || it.extension == "kt") }
+            }
+        }
+        dir = dir.parentFile
+    }
+    return null
+}
+
 //Stages a mod-dependency jar as a local Maven artifact under modDepsRepoDir, so it can be added
 //as "modjars:<jarBaseName>:local". This mirrors stageStarsectorApi() below: the maven layout +
 //"-sources.jar" naming convention is what lets IntelliJ automatically attach sources/docs for a
 //compileOnly dependency.
 //Starsector mod jars typically bundle their .java/.kt source files alongside the .class files
-//in the same jar.
+//in the same jar. If they have not, fall back the /src sources if present.
 fun stageModDependency(jarFile: File): String {
     val jarBaseName = jarFile.nameWithoutExtension
     val artifactDir = File(modDepsRepoDir, "modjars/$jarBaseName/local")
@@ -271,8 +293,30 @@ fun stageModDependency(jarFile: File): String {
         jarFile.copyTo(dstJar, overwrite = true)
     }
 
-    if (!dstSources.exists() || dstSources.lastModified() < jarFile.lastModified()) {
-        extractSourceEntriesOnly(jarFile, dstSources)
+    if (jarHasSourceEntries(jarFile)) {
+        //Preferred: sources bundled in the jar itself.
+        if (!dstSources.exists() || dstSources.lastModified() < jarFile.lastModified()) {
+            extractSourceEntriesOnly(jarFile, dstSources)
+        }
+    } else {
+        //Fallback: no sources in the jar, so use the owning mod's /src folder if it has one.
+        val modSrc = findModSrcDir(jarFile)
+        if (modSrc != null) {
+            val srcMtime = modSrc.walkTopDown().filter { it.isFile }.maxOfOrNull { it.lastModified() } ?: 0L
+            if (!dstSources.exists() || dstSources.lastModified() < maxOf(srcMtime, jarFile.lastModified())) {
+                dstSources.delete()
+                ant.withGroovyBuilder {
+                    "zip"(
+                        "destfile" to dstSources.absolutePath,
+                        "basedir" to modSrc.absolutePath,
+                        "includes" to "**/*.java,**/*.kt,**/*.kts"
+                    )
+                }
+            }
+        } else {
+            //Nothing to attach; make sure a stale sources jar from an earlier sync doesn't linger.
+            dstSources.delete()
+        }
     }
 
     if (!pomFile.exists()) {
