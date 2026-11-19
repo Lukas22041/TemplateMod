@@ -22,6 +22,8 @@ val packageIncludes = gradle.extra["packageIncludes"] as List<String>
 @Suppress("UNCHECKED_CAST")
 val packageIncludeExtensions = gradle.extra["packageIncludeExtensions"] as List<String>
 @Suppress("UNCHECKED_CAST")
+val packageExcludes = if (gradle.extra.has("packageExcludes")) gradle.extra["packageExcludes"] as List<String> else emptyList()
+@Suppress("UNCHECKED_CAST")
 val otherDependencies = gradle.extra["otherDependencies"] as List<String>
 val libsFolder = gradle.extra["libsFolder"] as String
 val devResolution = gradle.extra["devResolution"] as String
@@ -889,6 +891,11 @@ tasks.register<Zip>("packageMod") {
     from(projectDir) {
         packageIncludeExtensions.forEach { ext -> include("*.$ext") }
     }
+
+    // 4. Always exclude anything matching packageExcludes. Task-level excludes apply to every from() above,
+    // so they override packageIncludes and packageIncludeExtensions. Bare names/globs (no "/") are
+    // prefixed with "**/" so they match at any depth, e.g. src/notes/CLAUDE.local.md.
+    packageExcludes.forEach { pattern ->
+        exclude(if ('/' in pattern) pattern else "**/$pattern")
+    }
 }
-
-
