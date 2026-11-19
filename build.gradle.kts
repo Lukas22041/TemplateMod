@@ -625,7 +625,7 @@ fun stageStarsectorApi(): File {
     val sourcesFresh = if (useCommunityDocs) {
         dstSources.exists() && dstSources.lastModified() >= communityDocsMtime
     } else {
-        !srcZip.exists() || (dstSources.exists() && dstSources.lastModified() >= srcZip.lastModified())
+        !srcZip.exists() || (dstSources.exists() && dstSources.lastModified() == srcZip.lastModified())
     }
     if (jarFresh && sourcesFresh && pomFile.exists()) return repoDir
 
@@ -652,7 +652,10 @@ fun stageStarsectorApi(): File {
             }
         }
     } else {
-        stageIfStale(srcZip, dstSources)
+        if (srcZip.exists()) {
+            srcZip.copyTo(dstSources, overwrite = true)
+            dstSources.setLastModified(srcZip.lastModified())
+        }
     }
 
     //Minimal POM. Gradle's maven resolver needs one to recognise the artifact and to look up the -sources classifier.
