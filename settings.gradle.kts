@@ -19,7 +19,6 @@ val modDependencies = listOf(
     "LazyLib-Kotlin.jar",
 
     "MagicLib.jar", //MagicLib
-    "MagicLib-Kotlin.jar",
 
     "LunaLib.jar", //LunaLib
 
@@ -29,7 +28,7 @@ val modDependencies = listOf(
     //"Graphics.jar", //GraphicsLib
     //"ExerelinCore.jar", //Nexerelin
     //"lw_Console.jar", //Console Commands
-
+    //"PatchLibAPI.jar", // PatchLib
 )
 
 
@@ -41,7 +40,6 @@ val modDependencies = listOf(
 //Directories keep their structure in the zip; files are placed at the zip root.
 //Missing entries are silently skipped by Gradle.
 val packageIncludes = listOf(
-    "mod_info.json",
     "data",
     "graphics",
     "sounds",
@@ -54,7 +52,13 @@ val packageIncludes = listOf(
 val packageIncludeExtensions = listOf(
     "version",
     "md",
-    "txt"
+    "txt",
+    "json"
+)
+
+//Files always left out of the zip, overriding the includes above. Ant-style patterns; a name without "/" matches at any depth.
+val packageExcludes = listOf(
+    "/release_checklist.md"
 )
 
 //Additional jars to include, like libraries you ship with your mod.
@@ -116,6 +120,7 @@ gradle.extra["zipName"] = zipName
 gradle.extra["modDependencies"] = modDependencies
 gradle.extra["packageIncludes"] = packageIncludes
 gradle.extra["packageIncludeExtensions"] = packageIncludeExtensions
+gradle.extra["packageExcludes"] = packageExcludes
 gradle.extra["otherDependencies"] = otherDependencies
 gradle.extra["libsFolder"] = libsFolder
 gradle.extra["devResolution"] = devResolution
